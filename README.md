@@ -31,6 +31,12 @@ Edit `.env` with your credentials:
 | `QUOTE_DEVICE_ID` | Device serial number |
 | `OPENAI_ENABLED` | Set to `false` to skip OpenAI fetching (default: `true`) |
 | `UPDATE_INTERVAL` | Seconds between updates in loop mode (default: `1800`) |
+| `QUOTE_LINK` | Optional NFC tap redirect URL for the Image API content |
+| `QUOTE_BORDER` | Optional screen border color, `0` white or `1` black (default: `0`) |
+| `QUOTE_DITHER_TYPE` | Optional dithering mode: `NONE`, `DIFFUSION`, or `ORDERED` (default: `NONE`) |
+| `QUOTE_DITHER_KERNEL` | Optional dither kernel such as `FLOYD_STEINBERG` |
+| `QUOTE_TASK_KEY` | Optional Image API task key when multiple Image API contents exist |
+| `QUOTE_TASK_ALIAS` | Optional alias shown in the device task list |
 | `CODEX_ACCESS_TOKEN` | Override Codex OAuth token (optional; default: read from `~/.codex/auth.json`) |
 | `CODEX_ACCOUNT_ID` | Override Codex account ID (optional) |
 
@@ -46,7 +52,9 @@ Alternatively, set `CODEX_ACCESS_TOKEN` in `.env` to supply the token directly.
 
 ### 5. Add Image API content in Content Studio
 
-In the dot.mindreset.tech app, add an **Image API** content slot to your device. The script targets this slot.
+In the dot.mindreset.tech app, add an **Image API** content slot to your device. The script targets this slot. If you have multiple Image API slots, set `QUOTE_TASK_KEY` to the task key for the slot you want to update.
+
+If the API call succeeds but the device still shows an image placeholder, the Content Studio slot may be stale or misbound. Delete the existing Image API content slot, add a fresh Image API slot to the device's active layout or playlist, then run `uv run display.py --preview` again.
 
 ## Usage
 

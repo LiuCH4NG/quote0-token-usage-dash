@@ -10,6 +10,12 @@ Required .env keys:
 Optional .env keys:
   OPENAI_ENABLED=false   - Set to false to skip OpenAI scrape (default: true)
   UPDATE_INTERVAL=1800   - Seconds between updates when running with --loop (default: 1800)
+  QUOTE_LINK             - Optional NFC tap redirect URL
+  QUOTE_BORDER=0         - Screen border color: 0=white, 1=black (default: 0)
+  QUOTE_DITHER_TYPE=NONE - Dither type: DIFFUSION, ORDERED, NONE (default: NONE)
+  QUOTE_DITHER_KERNEL    - Optional dither kernel, e.g. FLOYD_STEINBERG
+  QUOTE_TASK_KEY         - Optional Image API task key when multiple slots exist
+  QUOTE_TASK_ALIAS       - Optional alias shown in the device task list
 """
 
 import base64
@@ -29,6 +35,12 @@ API_KEY = os.environ.get("QUOTE_API_KEY", "")
 DEVICE_ID = os.environ.get("QUOTE_DEVICE_ID", "") or os.environ.get("DEVICE_ID", "")
 OPENAI_ENABLED = os.environ.get("OPENAI_ENABLED", "true").lower() != "false"
 UPDATE_INTERVAL = int(os.environ.get("UPDATE_INTERVAL", "1800"))
+QUOTE_LINK = os.environ.get("QUOTE_LINK", "")
+QUOTE_BORDER = int(os.environ.get("QUOTE_BORDER", "0"))
+QUOTE_DITHER_TYPE = os.environ.get("QUOTE_DITHER_TYPE", "NONE").upper()
+QUOTE_DITHER_KERNEL = os.environ.get("QUOTE_DITHER_KERNEL", "").upper()
+QUOTE_TASK_KEY = os.environ.get("QUOTE_TASK_KEY", "")
+QUOTE_TASK_ALIAS = os.environ.get("QUOTE_TASK_ALIAS", "")
 
 
 # ---------------------------------------------------------------------------
@@ -68,17 +80,35 @@ def push_image(png_bytes: bytes) -> None:
     url = f"{API_BASE}/api/authV2/open/device/{DEVICE_ID}/image"
     payload = {
         "refreshNow": True,
-        "image": base64.b64encode(png_bytes).decode(),
-        "ditherType": "NONE",
-
+        "image": "data:image/png;base64," + base64.b64encode(png_bytes).decode(),
+        "border": QUOTE_BORDER,
+        "ditherType": QUOTE_DITHER_TYPE,
     }
+    if QUOTE_LINK:
+        payload["link"] = QUOTE_LINK
+    if QUOTE_DITHER_KERNEL:
+        payload["ditherKernel"] = QUOTE_DITHER_KERNEL
+    if QUOTE_TASK_KEY:
+        payload["taskKey"] = QUOTE_TASK_KEY
+    if QUOTE_TASK_ALIAS:
+        payload["taskAlias"] = QUOTE_TASK_ALIAS
+
     resp = requests.post(
         url,
         json=payload,
         headers={"Authorization": f"Bearer {API_KEY}"},
         timeout=20,
     )
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except requests.HTTPError as e:
+        message = None
+        try:
+            message = resp.json().get("message")
+        except ValueError:
+            message = resp.text.strip()
+        detail = f": {message}" if message else ""
+        raise RuntimeError(f"Image API failed with HTTP {resp.status_code}{detail}") from e
 
 
 # ---------------------------------------------------------------------------

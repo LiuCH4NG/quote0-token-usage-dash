@@ -212,7 +212,7 @@ def render_image(
             y += row_h
 
     buf = io.BytesIO()
-    img.convert("1").save(buf, format="PNG")
+    img.convert("RGB").save(buf, format="PNG")
     return buf.getvalue()
 
 
