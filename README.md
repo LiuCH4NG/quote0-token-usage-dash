@@ -8,8 +8,8 @@ Pushes Kimi and GLM subscription plan usage to a [dot.mindreset.tech](https://do
 
 ## What it shows
 
-- **Kimi** — 5-hour and weekly utilization (% used, % left, time to reset)
-- **GLM** — 5-hour, weekly, and MCP monthly utilization
+- **Kimi** — membership level, 5-hour and weekly utilization (% used, % left, time to reset)
+- **GLM** — 5-hour, weekly, and MCP monthly utilization (including used/total count)
 
 ## Setup
 
