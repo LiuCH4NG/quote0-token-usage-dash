@@ -1,7 +1,7 @@
 [project]
 name = "token-usage-dash"
 version = "0.1.0"
-description = "Add your description here"
+description = "Push Kimi and GLM token usage to a dot.mindreset.tech e-ink display"
 requires-python = ">=3.12"
 dependencies = [
     "pillow>=12.2.0",

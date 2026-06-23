@@ -1,5 +1,5 @@
 """
-Render a 296×152 black/white PNG image showing Claude + OpenAI Codex usage.
+Render a 296×152 black/white PNG image showing Kimi + GLM usage.
 
 Uses Terminus bitmap font — pure B&W pixels, no anti-aliasing, no grey.
 No supersampling needed.
@@ -25,9 +25,9 @@ FONT_BOLD    = str(_HERE / "fonts" / "terminus-bold.otb")
 
 BLACK = 0
 WHITE = 255
-LA    = ZoneInfo("America/Los_Angeles")
+TZ    = ZoneInfo("Asia/Shanghai")
 
-LABEL_W = 22   # px reserved for row label ("5h", "7d", "Wk")
+LABEL_W = 22   # px reserved for row label ("5h", "Wk", "MCP")
 NOTE_W  = 90   # px reserved for right-side text ("87%  2h37m")
 
 
@@ -109,8 +109,8 @@ def _draw_row(
 
 
 def render_image(
-    claude_usage: Optional[dict],
-    openai_usage=None,
+    kimi_usage: Optional[dict],
+    glm_usage=None,
 ) -> bytes:
     img  = Image.new("L", (W, H), WHITE)
     draw = ImageDraw.Draw(img)
@@ -124,7 +124,7 @@ def render_image(
     }
 
     # ── Header ────────────────────────────────────────────────────────────
-    now      = datetime.now(LA)
+    now      = datetime.now(TZ)
     date_str = now.strftime("%b %-d")
     time_str = now.strftime("%-I:%M %p")
 
@@ -142,52 +142,61 @@ def render_image(
     # ── Collect rows ──────────────────────────────────────────────────────
     from display import format_time_until, format_time_until_iso
 
-    claude_rows: list[tuple[str, float, Optional[str]]] = []
-    if claude_usage:
-        for key, lbl in [("five_hour", "5h"), ("seven_day", "7d"),
-                          ("seven_day_sonnet", "7dS"), ("seven_day_opus", "7dO")]:
-            w = claude_usage.get(key)
+    kimi_rows: list[tuple[str, float, Optional[str]]] = []
+    if kimi_usage:
+        for key, lbl in [("five_hour", "5h"), ("weekly_limit", "Wk")]:
+            w = kimi_usage.get(key)
             if w:
                 try:
-                    note = format_time_until_iso(w["resets_at"])
+                    note = format_time_until_iso(w["resets_at"]) if w.get("resets_at") else None
                 except Exception:
                     note = None
-                claude_rows.append((lbl, w["utilization"], note))
+                kimi_rows.append((lbl, w["utilization"], note))
 
-    openai_rows: list[tuple[str, float, Optional[str]]] = []
-    if openai_usage:
-        if openai_usage.primary_limit:
-            w = openai_usage.primary_limit
-            openai_rows.append(("5h", w.used_percent,
-                                 format_time_until(w.resets_at) if w.resets_at else None))
-        if openai_usage.secondary_limit:
-            w = openai_usage.secondary_limit
-            openai_rows.append(("Wk", w.used_percent,
-                                 format_time_until(w.resets_at) if w.resets_at else None))
+    glm_rows: list[tuple[str, float, Optional[str]]] = []
+    if glm_usage:
+        if glm_usage.primary_limit:
+            w = glm_usage.primary_limit
+            glm_rows.append(("5h", w.used_percent,
+                             format_time_until(w.resets_at) if w.resets_at else None))
+        if glm_usage.secondary_limit:
+            w = glm_usage.secondary_limit
+            glm_rows.append(("Wk", w.used_percent,
+                             format_time_until(w.resets_at) if w.resets_at else None))
+        if glm_usage.mcp_limit:
+            w = glm_usage.mcp_limit
+            used = getattr(w, "used", 0)
+            total = getattr(w, "total", 1000)
+            note = f"{used:.0f}/{total:.0f}"
+            glm_rows.append(("MCP", w.used_percent, note))
 
     # ── Layout ────────────────────────────────────────────────────────────
     SECTION_H = _lsize(fonts["section"]) + 5
     DIVIDER_H = 8
 
-    n_claude = len(claude_rows)
-    n_openai = len(openai_rows)
-    n_rows   = n_claude + n_openai
-    has_both = n_claude > 0 and n_openai > 0
+    n_kimi = len(kimi_rows)
+    n_glm  = len(glm_rows)
+    n_rows   = n_kimi + n_glm
+    has_both = n_kimi > 0 and n_glm > 0
 
     content_h = H - header_bottom - 2
-    fixed_h   = ((1 if n_claude else 0) + (1 if n_openai else 0)) * SECTION_H
+    fixed_h   = ((1 if n_kimi else 0) + (1 if n_glm else 0)) * SECTION_H
     fixed_h  += DIVIDER_H if has_both else 0
     row_h     = min((content_h - fixed_h) // n_rows, 28) if n_rows else content_h
 
     # Vertically center the content block when it doesn't fill the space
     total_h   = fixed_h + row_h * n_rows
     y_offset  = (content_h - total_h) // 2
-    # ── Claude ────────────────────────────────────────────────────────────
+
+    # ── Kimi ──────────────────────────────────────────────────────────────
     y = header_bottom + 2 + y_offset
-    if claude_rows:
-        draw.text((PAD, y), "Claude", font=fonts["section"], fill=BLACK)
+    if kimi_rows:
+        label = "Kimi"
+        if kimi_usage and kimi_usage.get("level"):
+            label += f"  ({kimi_usage['level']})"
+        draw.text((PAD, y), label, font=fonts["section"], fill=BLACK)
         y += SECTION_H
-        for label, used_pct, note in claude_rows:
+        for label, used_pct, note in kimi_rows:
             _draw_row(draw, y, row_h, label, used_pct, note, fonts)
             y += row_h
 
@@ -200,14 +209,14 @@ def render_image(
             x += dash + gap
         y += DIVIDER_H // 2
 
-    # ── OpenAI ────────────────────────────────────────────────────────────
-    if openai_rows:
-        label = "OpenAI Codex"
-        if openai_usage and openai_usage.credits_remaining is not None:
-            label += f"  ({openai_usage.credits_remaining:.0f} cr)"
+    # ── GLM ───────────────────────────────────────────────────────────────
+    if glm_rows:
+        label = "GLM"
+        if glm_usage and glm_usage.level:
+            label += f"  ({glm_usage.level})"
         draw.text((PAD, y), label, font=fonts["section"], fill=BLACK)
         y += SECTION_H
-        for row_label, used_pct, note in openai_rows:
+        for row_label, used_pct, note in glm_rows:
             _draw_row(draw, y, row_h, row_label, used_pct, note, fonts)
             y += row_h
 
@@ -217,19 +226,19 @@ def render_image(
 
 
 if __name__ == "__main__":
-    from usage import get_claude_usage, get_openai_usage
+    from usage import get_kimi_usage, get_glm_usage
 
-    claude, openai = None, None
+    kimi, glm = None, None
     try:
-        claude = get_claude_usage()
+        kimi = get_kimi_usage()
     except Exception as e:
-        print(f"Claude error: {e}")
+        print(f"Kimi error: {e}")
     try:
-        openai = get_openai_usage()
+        glm = get_glm_usage()
     except Exception as e:
-        print(f"OpenAI error: {e}")
+        print(f"GLM error: {e}")
 
-    png = render_image(claude, openai)
+    png = render_image(kimi, glm)
     with open("/tmp/usage_preview.png", "wb") as f:
         f.write(png)
     print(f"Saved /tmp/usage_preview.png ({len(png)} bytes)")

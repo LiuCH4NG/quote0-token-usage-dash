@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Update e-ink display (dot.mindreset.tech) with Claude + OpenAI Codex usage.
+Update e-ink display (dot.mindreset.tech) with Kimi + GLM usage.
 Renders a 296×152 PNG image and pushes via the Image API.
 
 Required .env keys:
@@ -8,7 +8,7 @@ Required .env keys:
   QUOTE_DEVICE_ID   - Device serial number (also accepts DEVICE_ID)
 
 Optional .env keys:
-  OPENAI_ENABLED=false   - Set to false to skip OpenAI scrape (default: true)
+  GLM_ENABLED=false      - Set to false to skip GLM fetching (default: true)
   UPDATE_INTERVAL=1800   - Seconds between updates when running with --loop (default: 1800)
   QUOTE_LINK             - Optional NFC tap redirect URL
   QUOTE_BORDER=0         - Screen border color: 0=white, 1=black (default: 0)
@@ -16,6 +16,8 @@ Optional .env keys:
   QUOTE_DITHER_KERNEL    - Optional dither kernel, e.g. FLOYD_STEINBERG
   QUOTE_TASK_KEY         - Optional Image API task key when multiple slots exist
   QUOTE_TASK_ALIAS       - Optional alias shown in the device task list
+  KIMI_API_KEY           - API key for Kimi usage endpoint
+  GLM_API_KEY            - API key for GLM monitor endpoint
 """
 
 import base64
@@ -33,7 +35,7 @@ load_dotenv(Path(__file__).parent / ".env")
 API_BASE = "https://dot.mindreset.tech"
 API_KEY = os.environ.get("QUOTE_API_KEY", "")
 DEVICE_ID = os.environ.get("QUOTE_DEVICE_ID", "") or os.environ.get("DEVICE_ID", "")
-OPENAI_ENABLED = os.environ.get("OPENAI_ENABLED", "true").lower() != "false"
+GLM_ENABLED = os.environ.get("GLM_ENABLED", "true").lower() != "false"
 UPDATE_INTERVAL = int(os.environ.get("UPDATE_INTERVAL", "1800"))
 QUOTE_LINK = os.environ.get("QUOTE_LINK", "")
 QUOTE_BORDER = int(os.environ.get("QUOTE_BORDER", "0"))
@@ -54,9 +56,14 @@ def format_time_until(dt) -> str:
     seconds = int(delta.total_seconds())
     if seconds <= 0:
         return "now"
-    h, rem = divmod(seconds, 3600)
+    d, rem = divmod(seconds, 86400)
+    h, rem = divmod(rem, 3600)
     m = rem // 60
-    return f"{h}h{m:02d}m" if h > 0 else f"{m}m"
+    if d > 0:
+        return f"{d}d{h:02d}h{m:02d}m"
+    if h > 0:
+        return f"{h}h{m:02d}m"
+    return f"{m}m"
 
 
 def format_time_until_iso(iso_str: str) -> str:
@@ -117,28 +124,28 @@ def push_image(png_bytes: bytes) -> None:
 
 def run_once(save_preview: bool = False) -> bool:
     """Fetch usage, render image, push to display. Returns True on success."""
-    from usage import get_claude_usage, get_openai_usage
+    from usage import get_kimi_usage, get_glm_usage
     from render import render_image
 
-    claude_usage = None
-    openai_usage = None
+    kimi_usage = None
+    glm_usage = None
 
     try:
-        claude_usage = get_claude_usage()
+        kimi_usage = get_kimi_usage()
     except Exception as e:
-        print(f"Warning: Claude fetch failed — {e}", file=sys.stderr)
+        print(f"Warning: Kimi fetch failed — {e}", file=sys.stderr)
 
-    if OPENAI_ENABLED:
+    if GLM_ENABLED:
         try:
-            openai_usage = get_openai_usage()
+            glm_usage = get_glm_usage()
         except Exception as e:
-            print(f"Warning: OpenAI fetch failed — {e}", file=sys.stderr)
+            print(f"Warning: GLM fetch failed — {e}", file=sys.stderr)
 
-    if claude_usage is None and openai_usage is None:
+    if kimi_usage is None and glm_usage is None:
         print("Error: no usage data, skipping update.", file=sys.stderr)
         return False
 
-    png = render_image(claude_usage, openai_usage)
+    png = render_image(kimi_usage, glm_usage)
 
     if save_preview:
         preview_path = "/tmp/usage_preview.png"

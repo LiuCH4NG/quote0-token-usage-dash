@@ -1,19 +1,15 @@
 #!/usr/bin/env python3
 """
-Fetch subscription plan usage for Claude and OpenAI Codex.
+Fetch subscription plan usage for Kimi and GLM.
 
-Claude: uses OAuth token from ~/.claude/.credentials.json
-OpenAI Codex: uses OAuth token from ~/.codex/auth.json
-              or CODEX_ACCESS_TOKEN env var / .env file
-              endpoint: https://chatgpt.com/backend-api/wham/usage
+Kimi:  https://api.kimi.com/coding/v1/usages
+GLM:   https://open.bigmodel.cn/api/monitor/usage/quota/limit
 """
 
-import json
 import os
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Optional
 
 import requests
@@ -21,87 +17,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# ---------------------------------------------------------------------------
-# Claude
-# ---------------------------------------------------------------------------
-
-CREDENTIALS_PATH = Path.home() / ".claude" / ".credentials.json"
-USAGE_ENDPOINT   = "https://api.anthropic.com/api/oauth/usage"
-TOKEN_ENDPOINT   = "https://console.anthropic.com/v1/oauth/token"
-CLIENT_ID        = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-
-
-def load_credentials() -> dict:
-    if not CREDENTIALS_PATH.exists():
-        raise FileNotFoundError(
-            f"No credentials found at {CREDENTIALS_PATH}. "
-            "Run `claude` to authenticate first."
-        )
-    with open(CREDENTIALS_PATH) as f:
-        data = json.load(f)
-    return data["claudeAiOauth"]
-
-
-def save_credentials(creds: dict) -> None:
-    with open(CREDENTIALS_PATH) as f:
-        data = json.load(f)
-    data["claudeAiOauth"].update(creds)
-    with open(CREDENTIALS_PATH, "w") as f:
-        json.dump(data, f, indent=2)
-
-
-def _refresh_token(refresh_token: str) -> dict:
-    resp = requests.post(
-        TOKEN_ENDPOINT,
-        json={
-            "grant_type": "refresh_token",
-            "refresh_token": refresh_token,
-            "client_id": CLIENT_ID,
-        },
-        timeout=10,
-    )
-    resp.raise_for_status()
-    return resp.json()
-
-
-def _fetch_claude_usage(access_token: str) -> dict:
-    resp = requests.get(
-        USAGE_ENDPOINT,
-        headers={
-            "Authorization": f"Bearer {access_token}",
-            "anthropic-beta": "oauth-2025-04-20",
-        },
-        timeout=10,
-    )
-    if resp.status_code == 429:
-        raise RuntimeError("Rate limited by usage endpoint. Try again in a few minutes.")
-    resp.raise_for_status()
-    return resp.json()
-
-
-def get_claude_usage() -> dict:
-    creds = load_credentials()
-    access_token = creds["accessToken"]
-    try:
-        return _fetch_claude_usage(access_token)
-    except requests.HTTPError as e:
-        if e.response.status_code != 401:
-            raise
-        new = _refresh_token(creds["refreshToken"])
-        save_credentials({
-            "accessToken": new["access_token"],
-            "refreshToken": new.get("refresh_token", creds["refreshToken"]),
-        })
-        return _fetch_claude_usage(new["access_token"])
-
 
 # ---------------------------------------------------------------------------
-# OpenAI Codex — OAuth API (token from ~/.codex/auth.json)
+# Shared helpers
 # ---------------------------------------------------------------------------
-
-CODEX_AUTH_PATH  = Path.home() / ".codex" / "auth.json"
-CODEX_USAGE_URL  = "https://chatgpt.com/backend-api/wham/usage"
-
 
 @dataclass
 class RateWindow:
@@ -109,85 +28,21 @@ class RateWindow:
     resets_at: Optional[datetime] = None
 
 
-@dataclass
-class OpenAIUsage:
-    primary_limit: Optional[RateWindow] = None    # 5-hour
-    secondary_limit: Optional[RateWindow] = None  # weekly
-    credits_remaining: Optional[float] = None
-    account_plan: Optional[str] = None
-
-
-def _load_codex_token() -> tuple[str, str]:
-    """Return (access_token, account_id). .env / env var takes priority."""
-    env_token = os.environ.get("CODEX_ACCESS_TOKEN", "").strip()
-    if env_token:
-        account_id = os.environ.get("CODEX_ACCOUNT_ID", "").strip()
-        return env_token, account_id
-
-    if not CODEX_AUTH_PATH.exists():
-        raise FileNotFoundError(
-            f"No Codex credentials found at {CODEX_AUTH_PATH}. "
-            "Run `codex` to authenticate first, or set CODEX_ACCESS_TOKEN in .env."
-        )
-    with open(CODEX_AUTH_PATH) as f:
-        auth = json.load(f)
-    tokens = auth["tokens"]
-    return tokens["access_token"], tokens.get("account_id", "")
-
-
-def get_openai_usage() -> OpenAIUsage:
-    """Fetch OpenAI Codex plan usage via the OAuth API."""
-    access_token, account_id = _load_codex_token()
-
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Accept": "application/json",
-        "User-Agent": "token-usage-dash",
-    }
-    if account_id:
-        headers["ChatGPT-Account-Id"] = account_id
-
-    resp = requests.get(CODEX_USAGE_URL, headers=headers, timeout=15)
-    resp.raise_for_status()
-    data = resp.json()
-
-    usage = OpenAIUsage()
-    usage.account_plan = data.get("plan_type")
-
-    credits = data.get("credits", {})
-    if credits.get("balance") is not None:
-        usage.credits_remaining = float(credits["balance"])
-
-    rate_limit = data.get("rate_limit", {})
-
-    def _window(w: Optional[dict]) -> Optional[RateWindow]:
-        if not w:
-            return None
-        used_pct = float(w.get("used_percent", 0))
-        reset_ts = w.get("reset_at")
-        resets_at = datetime.fromtimestamp(reset_ts, tz=timezone.utc) if reset_ts else None
-        return RateWindow(used_percent=used_pct, resets_at=resets_at)
-
-    usage.primary_limit   = _window(rate_limit.get("primary_window"))
-    usage.secondary_limit = _window(rate_limit.get("secondary_window"))
-
-    return usage
-
-
-# ---------------------------------------------------------------------------
-# Display helpers
-# ---------------------------------------------------------------------------
-
 def format_time_until(dt: Optional[datetime]) -> str:
     if dt is None:
-        return "unknown"
+        return "?"
     delta = dt - datetime.now(timezone.utc)
     seconds = int(delta.total_seconds())
     if seconds <= 0:
         return "now"
-    h, rem = divmod(seconds, 3600)
+    d, rem = divmod(seconds, 86400)
+    h, rem = divmod(rem, 3600)
     m = rem // 60
-    return f"{h}h {m}m" if h > 0 else f"{m}m"
+    if d > 0:
+        return f"{d}d{h:02d}h{m:02d}m"
+    if h > 0:
+        return f"{h}h{m:02d}m"
+    return f"{m}m"
 
 
 def format_time_until_iso(iso_str: str) -> str:
@@ -199,14 +54,113 @@ def _bar(used_pct: float, width: int = 20) -> str:
     return "█" * filled + "░" * (width - filled)
 
 
-def print_claude_usage(usage: dict) -> None:
+# ---------------------------------------------------------------------------
+# Kimi
+# ---------------------------------------------------------------------------
+
+KIMI_USAGE_URL = "https://api.kimi.com/coding/v1/usages"
+
+
+def _parse_reset_time(value) -> Optional[str]:
+    """Try to normalize a reset time value into an ISO-8601 string."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        # Already ISO-8601 from the API
+        return value
+    if isinstance(value, (int, float)):
+        # Milliseconds timestamp -> ISO-8601
+        ts = value / 1000 if value > 1e10 else value
+        return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+    return None
+
+
+def get_kimi_usage() -> dict:
+    """Fetch Kimi coding-plan usage.
+
+    Returns a dict shaped like:
+        {
+            "success": True,
+            "five_hour": {"utilization": float, "resets_at": str},
+            "weekly_limit": {"utilization": float, "resets_at": str},
+        }
+    """
+    api_key = os.environ.get("KIMI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("KIMI_API_KEY not set in .env")
+
+    resp = requests.get(
+        KIMI_USAGE_URL,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json",
+        },
+        timeout=15,
+    )
+
+    status = resp.status_code
+    if status in (401, 403):
+        raise RuntimeError(f"Kimi authentication failed (HTTP {status})")
+    if status == 429:
+        raise RuntimeError("Rate limited by Kimi usage endpoint. Try again in a few minutes.")
+    resp.raise_for_status()
+
+    body = resp.json()
+    result: dict = {"success": True}
+
+    # Membership level, e.g. "LEVEL_INTERMEDIATE"
+    membership = body.get("user", {}).get("membership", {})
+    level = membership.get("level")
+    if isinstance(level, str):
+        result["level"] = level.removeprefix("LEVEL_").upper()
+
+    # 5-hour window limit (priority)
+    limits = body.get("limits") or []
+    if isinstance(limits, list):
+        for limit_item in limits:
+            detail = limit_item.get("detail") if isinstance(limit_item, dict) else None
+            if not detail:
+                continue
+            limit = float(detail.get("limit", 1) or 1)
+            used = float(detail.get("used", 0) or 0)
+            resets_at = _parse_reset_time(detail.get("resetTime"))
+
+            utilization = ((used / limit * 100.0) if limit > 0 else 0.0)
+            result["five_hour"] = {
+                "utilization": utilization,
+                "resets_at": resets_at,
+            }
+            break
+
+    # Weekly limit
+    usage = body.get("usage")
+    if isinstance(usage, dict):
+        limit = float(usage.get("limit", 1) or 1)
+        used = float(usage.get("used", 0) or 0)
+        resets_at = _parse_reset_time(usage.get("resetTime"))
+
+        utilization = ((used / limit * 100.0) if limit > 0 else 0.0)
+        result["weekly_limit"] = {
+            "utilization": utilization,
+            "resets_at": resets_at,
+        }
+
+    return result
+
+
+def print_kimi_usage(usage: dict) -> None:
+    if usage.get("level"):
+        print(f"Kimi plan usage ({usage['level']}):")
+    else:
+        print("Kimi plan usage:")
+    if not usage.get("success"):
+        print(f"  Error: {usage.get('error', 'unknown')}")
+        return
+
     labels = {
-        "five_hour":        "5-hour   ",
-        "seven_day":        "7-day    ",
-        "seven_day_sonnet": "7d Sonnet",
-        "seven_day_opus":   "7d Opus  ",
+        "five_hour": "5-hour  ",
+        "weekly_limit": "Weekly  ",
     }
-    print("Claude plan usage:")
     any_data = False
     for key, label in labels.items():
         window = usage.get(key)
@@ -215,18 +169,104 @@ def print_claude_usage(usage: dict) -> None:
         any_data = True
         util = window["utilization"]
         remaining = 100 - util
-        resets = format_time_until_iso(window["resets_at"])
+        resets = format_time_until_iso(window["resets_at"]) if window.get("resets_at") else "?"
         print(f"  {label}  [{_bar(util)}] {util:5.1f}% used  {remaining:5.1f}% left  resets in {resets}")
     if not any_data:
         print("  No usage data returned.")
 
 
-def print_openai_usage(usage: OpenAIUsage) -> None:
-    print("OpenAI Codex plan usage:")
-    if usage.account_plan:
-        print(f"  Plan: {usage.account_plan}")
-    if usage.credits_remaining is not None:
-        print(f"  Credits remaining: {usage.credits_remaining:,.1f}")
+# ---------------------------------------------------------------------------
+# GLM
+# ---------------------------------------------------------------------------
+
+GLM_USAGE_URL = "https://open.bigmodel.cn/api/monitor/usage/quota/limit"
+
+
+@dataclass
+class GLMUsage:
+    primary_limit: Optional[RateWindow] = None    # 5-hour tokens
+    secondary_limit: Optional[RateWindow] = None  # weekly tokens
+    mcp_limit: Optional[RateWindow] = None        # MCP monthly
+    level: Optional[str] = None
+
+
+def _ms_to_datetime(ts) -> Optional[datetime]:
+    if ts is None:
+        return None
+    try:
+        seconds = float(ts) / 1000.0
+        return datetime.fromtimestamp(seconds, tz=timezone.utc)
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+def get_glm_usage() -> GLMUsage:
+    """Fetch GLM usage from the bigmodel.cn monitor API."""
+    api_key = os.environ.get("GLM_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("GLM_API_KEY not set in .env")
+
+    resp = requests.get(
+        GLM_USAGE_URL,
+        headers={
+            "Authorization": api_key,
+            "Content-Type": "application/json",
+        },
+        timeout=15,
+    )
+    resp.raise_for_status()
+
+    payload = resp.json()
+    if not payload.get("success"):
+        msg = payload.get("msg") or payload.get("message") or "GLM quota query failed"
+        raise RuntimeError(msg)
+
+    data = payload.get("data") or {}
+    limits = data.get("limits") or []
+    if not isinstance(limits, list):
+        limits = []
+
+    token_limits = [l for l in limits if isinstance(l, dict) and l.get("type") == "TOKENS_LIMIT"]
+    token_limits.sort(key=lambda l: (l.get("nextResetTime") or 0))
+
+    mcp = next((l for l in limits if isinstance(l, dict) and l.get("type") == "TIME_LIMIT"), None)
+
+    usage = GLMUsage(level=data.get("level"))
+
+    if token_limits:
+        first = token_limits[0]
+        pct = float(first.get("percentage") or 0)
+        usage.primary_limit = RateWindow(
+            used_percent=pct,
+            resets_at=_ms_to_datetime(first.get("nextResetTime")),
+        )
+
+    if len(token_limits) > 1:
+        second = token_limits[1]
+        pct = float(second.get("percentage") or 0)
+        usage.secondary_limit = RateWindow(
+            used_percent=pct,
+            resets_at=_ms_to_datetime(second.get("nextResetTime")),
+        )
+
+    if mcp:
+        total = float(mcp.get("usage") or 1000) or 1000
+        used = float(mcp.get("currentValue") or 0)
+        pct = (used / total * 100.0) if total > 0 else 0.0
+        usage.mcp_limit = RateWindow(
+            used_percent=pct,
+            resets_at=_ms_to_datetime(mcp.get("nextResetTime")),
+        )
+        usage.mcp_limit.total = total  # type: ignore[attr-defined]
+        usage.mcp_limit.used = used      # type: ignore[attr-defined]
+
+    return usage
+
+
+def print_glm_usage(usage: GLMUsage) -> None:
+    print("GLM plan usage:")
+    if usage.level:
+        print(f"  Plan: {usage.level.upper()}")
     if usage.primary_limit:
         w = usage.primary_limit
         resets = format_time_until(w.resets_at)
@@ -235,6 +275,13 @@ def print_openai_usage(usage: OpenAIUsage) -> None:
         w = usage.secondary_limit
         resets = format_time_until(w.resets_at)
         print(f"  Weekly   [{_bar(w.used_percent)}] {w.used_percent:5.1f}% used  {100-w.used_percent:5.1f}% left  resets in {resets}")
+    if usage.mcp_limit:
+        w = usage.mcp_limit
+        total = getattr(w, "total", 1000)
+        used = getattr(w, "used", 0)
+        remaining = total - used
+        resets = format_time_until(w.resets_at)
+        print(f"  MCP      [{_bar(w.used_percent)}] {used:.0f}/{total:.0f} used  {remaining:.0f} left  resets in {resets}")
 
 
 # ---------------------------------------------------------------------------
@@ -245,29 +292,29 @@ def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(description="Show subscription plan usage")
-    parser.add_argument("--claude-only", action="store_true")
-    parser.add_argument("--openai-only", action="store_true")
+    parser.add_argument("--kimi-only", action="store_true")
+    parser.add_argument("--glm-only", action="store_true")
     args = parser.parse_args()
 
-    show_claude = not args.openai_only
-    show_openai = not args.claude_only
+    show_kimi = not args.glm_only
+    show_glm = not args.kimi_only
     errors = []
 
-    if show_claude:
+    if show_kimi:
         print()
         try:
-            print_claude_usage(get_claude_usage())
+            print_kimi_usage(get_kimi_usage())
         except Exception as e:
             errors.append(str(e))
-            print(f"Claude: error — {e}")
+            print(f"Kimi: error — {e}")
 
-    if show_openai:
+    if show_glm:
         print()
         try:
-            print_openai_usage(get_openai_usage())
+            print_glm_usage(get_glm_usage())
         except Exception as e:
             errors.append(str(e))
-            print(f"OpenAI: error — {e}")
+            print(f"GLM: error — {e}")
 
     print()
     if errors:
