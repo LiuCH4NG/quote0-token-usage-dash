@@ -2,6 +2,8 @@
 
 Pushes Kimi and GLM subscription plan usage to a [dot.mindreset.tech](https://dot.mindreset.tech) e-ink display as a 296×152 image.
 
+[中文文档](README_CN.md)
+
 ![Token usage on e-ink display](docs/preview.jpg)
 
 ## What it shows

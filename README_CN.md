@@ -2,6 +2,8 @@
 
 将 Kimi 和 GLM 的订阅套餐用量推送到 [dot.mindreset.tech](https://dot.mindreset.tech) 墨水屏，显示为一张 296×152 的黑白图片。
 
+[English README](README.md)
+
 ![Token usage on e-ink display](docs/preview.jpg)
 
 ## 显示内容
